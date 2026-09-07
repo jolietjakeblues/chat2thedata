@@ -11,7 +11,7 @@ from answer import answer_generator
 from sparql import executor as sparql_executor
 from sparql import spatial
 from sparql.executor import _validate_read_query
-from sparql.postprocess import inject_prefixes
+from sparql.postprocess import fix_missing_where_wrapper, inject_prefixes, postprocess
 from sparql.semantic_resolver import ResolvedTerm, _find_longest
 from sparql.semantic_validator import validate_semantics
 
@@ -34,6 +34,48 @@ class QueryValidationTests(unittest.TestCase):
         self.assertIn(
             "PREFIX geo: <http://www.opengis.net/ont/geosparql#>", query
         )
+
+    def test_missing_where_wrapper_around_graph_is_repaired(self):
+        # Gezien op qwen2.5-coder:14b (Ollama): SELECT direct gevolgd door
+        # GRAPH zonder omliggende WHERE { } geeft een parserfout op het
+        # RCE-endpoint ("Invalid SPARQL query: Parser error ... GRAPH ...").
+        broken = (
+            "PREFIX ceo: <https://linkeddata.cultureelerfgoed.nl/def/ceo#>\n"
+            "PREFIX graph: <https://linkeddata.cultureelerfgoed.nl/graph/>\n\n"
+            "SELECT (COUNT(DISTINCT ?rm) AS ?aantal)\n"
+            "GRAPH graph:instanties-rce {\n"
+            "  ?rm a ceo:Rijksmonument .\n"
+            "  ?rm ceo:heeftBasisregistratieRelatie ?relatie .\n"
+            "  ?relatie ceo:heeftProvincie "
+            "<http://standaarden.overheid.nl/owms/terms/Utrecht_(provincie)> .\n"
+            "}"
+        )
+        fixed = fix_missing_where_wrapper(broken)
+
+        self.assertEqual(fixed.count("{"), fixed.count("}"))
+        self.assertIn("WHERE {", fixed)
+        self.assertIn("GRAPH graph:instanties-rce {", fixed)
+        # De WHERE-accolade moet ook echt om het GRAPH-blok heen staan, niet
+        # er los naast.
+        self.assertRegex(
+            fixed, r"WHERE\s*\{\s*GRAPH graph:instanties-rce \{"
+        )
+
+        # postprocess() als geheel moet dezelfde query nu geldig maken.
+        full = postprocess(broken, "telling")
+        self.assertEqual(full.count("{"), full.count("}"))
+
+    def test_already_wrapped_graph_query_is_untouched(self):
+        already_valid = (
+            "SELECT (COUNT(DISTINCT ?rm) AS ?aantal) WHERE {\n"
+            "  GRAPH graph:instanties-rce { ?rm a ceo:Rijksmonument . }\n"
+            "}"
+        )
+        self.assertEqual(fix_missing_where_wrapper(already_valid), already_valid)
+
+    def test_query_without_graph_is_untouched(self):
+        query = "SELECT * WHERE { ?rm a ceo:Rijksmonument . }"
+        self.assertEqual(fix_missing_where_wrapper(query), query)
 
 
 class SemanticResolverTests(unittest.TestCase):

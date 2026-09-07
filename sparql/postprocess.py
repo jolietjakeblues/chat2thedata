@@ -2,6 +2,7 @@
 Nabewerking van gegenereerde SPARQL queries.
 
 Verantwoordelijkheden:
+- Ontbrekende WHERE/accolade rond een top-level GRAPH-blok herstellen
 - Verplichte prefixen injecteren als ze ontbreken
 - COUNT detecteren in lijstmodus
 - Provincie-filterpad normaliseren naar directe URI match
@@ -57,6 +58,51 @@ def inject_prefixes(query: str) -> str:
 
     if additions:
         return "\n".join(additions) + "\n\n" + query
+
+    return query
+
+
+def fix_missing_where_wrapper(query: str) -> str:
+    """
+    Herstel een ontbrekende WHERE/accolade rond een top-level GRAPH-blok.
+
+    Sommige modellen (vooral kleinere lokale) genereren af en toe:
+        SELECT (COUNT(DISTINCT ?rm) AS ?aantal)
+        GRAPH graph:instanties-rce { ... }
+    zonder omliggende WHERE { }. Dat is geen geldige SPARQL: GRAPH mag
+    alleen binnen een group graph pattern ({ }) staan. Voeg de ontbrekende
+    accolades toe zodat het GRAPH-blok in een geldig WHERE-blok valt.
+
+    Staat er tussen SELECT en GRAPH al een { (dus WHERE { GRAPH ... of
+    kaal { GRAPH ...), dan is de query al goed gevormd en wordt niets
+    aangepast.
+    """
+    match = re.search(r"SELECT\b[^{]*?(\bGRAPH\s+\S+\s*\{)", query, re.IGNORECASE)
+
+    if not match:
+        return query
+
+    graph_brace_start = match.end() - 1
+
+    depth = 0
+    close_pos = None
+
+    for i in range(graph_brace_start, len(query)):
+        if query[i] == "{":
+            depth += 1
+        elif query[i] == "}":
+            depth -= 1
+            if depth == 0:
+                close_pos = i
+                break
+
+    if close_pos is None:
+        return query
+
+    insert_where_at = match.start(1)
+    query = query[:insert_where_at] + "WHERE {\n" + query[insert_where_at:]
+    close_pos += len("WHERE {\n")
+    query = query[: close_pos + 1] + "\n}" + query[close_pos + 1 :]
 
     return query
 
@@ -191,14 +237,16 @@ def postprocess(query: str, mode: str) -> str:
 
     Volgorde is belangrijk:
     1. Strip backticks
-    2. Inject prefixen
-    3. Fix provincie pad
-    4. Normaliseer provincie naar URI
-    5. Fix label filters
-    6. Inject prefixen opnieuw, want fixes kunnen rdfs toevoegen
+    2. Herstel ontbrekende WHERE/accolade rond een top-level GRAPH-blok
+    3. Inject prefixen
+    4. Fix provincie pad
+    5. Normaliseer provincie naar URI
+    6. Fix label filters
+    7. Inject prefixen opnieuw, want fixes kunnen rdfs toevoegen
     """
     query = query.replace("```sparql", "").replace("```", "").strip()
 
+    query = fix_missing_where_wrapper(query)
     query = inject_prefixes(query)
     query = fix_provincie_pad(query)
     query = normalize_provincie_uri(query)
