@@ -533,13 +533,15 @@ def _summarize_generic_list(question: str, vars_: list[str], bindings: list[dict
     return " ".join(parts)
 
 
-def generate(question: str, results: dict[str, Any]) -> str:
+def generate(question: str, results: dict[str, Any], caveat: str | None = None) -> str:
     """
     Genereer een Nederlands antwoord bij SPARQL JSON-resultaten.
 
     Args:
         question: De oorspronkelijke gebruikersvraag.
         results: SPARQL JSON result dict.
+        caveat: Optionele kanttekening (bv. van een gekozen deelinterpretatie
+            uit sparql/answerability.py) die achter het antwoord getoond wordt.
 
     Returns:
         Een korte, volledige Nederlandse tekst.
@@ -548,17 +550,16 @@ def generate(question: str, results: dict[str, Any]) -> str:
     bindings = _bindings(results)
 
     if not results:
-        return "Er zijn geen SPARQL-resultaten ontvangen."
+        answer = "Er zijn geen SPARQL-resultaten ontvangen."
+    elif not bindings:
+        answer = "Ik vond geen resultaten voor deze vraag. Probeer eventueel een bredere vraag of controleer de gegenereerde SPARQL-query."
+    elif _is_count_result(vars_, bindings):
+        answer = _summarize_count(question, results)
+    else:
+        geospatial_summary = _summarize_geospatial_list(question, vars_, bindings)
+        answer = geospatial_summary or _summarize_generic_list(question, vars_, bindings)
 
-    if not bindings:
-        return "Ik vond geen resultaten voor deze vraag. Probeer eventueel een bredere vraag of controleer de gegenereerde SPARQL-query."
+    if caveat:
+        answer = f"{answer}\n\nLet op: {caveat}"
 
-    if _is_count_result(vars_, bindings):
-        return _summarize_count(question, results)
-
-    geospatial_summary = _summarize_geospatial_list(question, vars_, bindings)
-
-    if geospatial_summary:
-        return geospatial_summary
-
-    return _summarize_generic_list(question, vars_, bindings)
+    return answer

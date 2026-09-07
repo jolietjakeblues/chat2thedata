@@ -18,6 +18,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 import config
 from answer import answer_generator
+from sparql import answerability
 from sparql import executor as sparql_executor
 from sparql import semantic_resolver
 from sparql import sparql_generator
@@ -163,6 +164,9 @@ def generate_sparql():
     disambiguation = data.get("disambiguation")
     if not isinstance(disambiguation, dict):
         disambiguation = None
+    limitation_choice = data.get("limitation_choice")
+    if not isinstance(limitation_choice, str) or not limitation_choice:
+        limitation_choice = None
 
     detected_mode = detect_mode(question)
     mode = "telling" if detected_mode == "telling" else (frontend_mode or "lijst")
@@ -182,11 +186,14 @@ def generate_sparql():
         return jsonify({"error": "Ongeldige modus. Gebruik 'lijst' of 'telling'."}), 400
 
     try:
-        query = sparql_generator.generate(question, mode, disambiguation)
-        return jsonify({"query": query})
+        result = sparql_generator.generate(question, mode, disambiguation, limitation_choice)
+        return jsonify({"query": result.query, "caveat": result.caveat})
 
     except sparql_generator.ClarificationNeeded as exc:
         return jsonify({"clarification": semantic_resolver.describe_ambiguity(exc.ambiguous)})
+
+    except sparql_generator.AnswerabilityLimitationNeeded as exc:
+        return jsonify({"clarification": answerability.describe_limitation(exc.limitation)})
 
     except Exception as e:
         logger.exception("Fout bij SPARQL generatie")
@@ -282,9 +289,12 @@ def generate_answer():
     results = data.get("results", {})
     if not isinstance(results, dict):
         return jsonify({"error": "'results' moet een JSON-object zijn"}), 400
+    caveat = data.get("caveat")
+    if not isinstance(caveat, str) or not caveat:
+        caveat = None
 
     try:
-        answer = answer_generator.generate(question, results)
+        answer = answer_generator.generate(question, results, caveat=caveat)
         return jsonify({"answer": answer})
 
     except Exception as e:
