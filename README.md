@@ -12,7 +12,7 @@ De app ondersteunt meerdere LLM-providers:
 
 De applicatie is geoptimaliseerd voor de Cultureel Erfgoed Ontologie (CEO) en bevat extra datamodelregels om betere SPARQL queries te genereren.
 
-**Live demo:** _nog niet gepubliceerd — vul hier de Render-URL in zodra de app live staat._
+**Live demo:** https://chat2thedata.onrender.com
 
 ---
 
