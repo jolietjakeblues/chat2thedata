@@ -19,6 +19,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import config
 from answer import answer_generator
 from sparql import executor as sparql_executor
+from sparql import semantic_resolver
 from sparql import sparql_generator
 
 
@@ -159,6 +160,9 @@ def generate_sparql():
         return error
     question = str(data.get("question") or "").strip()
     frontend_mode = data.get("mode")
+    disambiguation = data.get("disambiguation")
+    if not isinstance(disambiguation, dict):
+        disambiguation = None
 
     detected_mode = detect_mode(question)
     mode = "telling" if detected_mode == "telling" else (frontend_mode or "lijst")
@@ -178,8 +182,11 @@ def generate_sparql():
         return jsonify({"error": "Ongeldige modus. Gebruik 'lijst' of 'telling'."}), 400
 
     try:
-        query = sparql_generator.generate(question, mode)
+        query = sparql_generator.generate(question, mode, disambiguation)
         return jsonify({"query": query})
+
+    except sparql_generator.ClarificationNeeded as exc:
+        return jsonify({"clarification": semantic_resolver.describe_ambiguity(exc.ambiguous)})
 
     except Exception as e:
         logger.exception("Fout bij SPARQL generatie")

@@ -1276,6 +1276,40 @@ function errorCard(title, message) {
   `;
 }
 
+function clarificationCard(clarification) {
+  const options = clarification.options.map((opt, i) => `
+    <button class="secondary-btn" data-clarify-index="${i}">${escapeHTML(opt.label)}</button>
+  `).join('');
+
+  return `
+    <div class="card" id="clarificationCard">
+      <div class="card-header">
+        <span class="card-dot gold"></span>
+        <h4>Verduidelijking nodig</h4>
+      </div>
+      <div class="card-body">
+        <p>${escapeHTML(clarification.message)}</p>
+        <div class="toolbar-actions">${options}</div>
+      </div>
+    </div>
+  `;
+}
+
+function waitForClarificationChoice(clarification) {
+  return new Promise((resolve) => {
+    const card = document.getElementById('clarificationCard');
+    const buttons = card ? card.querySelectorAll('[data-clarify-index]') : [];
+
+    buttons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const option = clarification.options[Number(btn.dataset.clarifyIndex)];
+        buttons.forEach((b) => { b.disabled = true; });
+        resolve({[option.term_label]: option.id});
+      });
+    });
+  });
+}
+
 function renderSparql(query) {
   let e = escapeHTML(query);
 
@@ -2222,7 +2256,18 @@ async function ask() {
     updatePipeline(1);
     content.innerHTML = loadingCard('SPARQL genereren', 'Vraag vertalen naar SPARQL…', '');
 
-    const d1 = await postJSON('/generate-sparql', {question: q, mode: mode});
+    let d1 = await postJSON('/generate-sparql', {question: q, mode: mode});
+
+    while (d1.clarification) {
+      content.innerHTML = clarificationCard(d1.clarification);
+      const choice = await waitForClarificationChoice(d1.clarification);
+
+      updatePipeline(1);
+      content.innerHTML = loadingCard('SPARQL genereren', 'Vraag vertalen naar SPARQL…', '');
+
+      d1 = await postJSON('/generate-sparql', {question: q, mode: mode, disambiguation: choice});
+    }
+
     const sparqlQuery = d1.query;
 
     content.innerHTML = renderSparqlDetails(sparqlQuery);

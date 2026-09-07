@@ -302,6 +302,35 @@ class ApiTests(unittest.TestCase):
             response = self.client.get("/api/health")
         self.assertTrue(response.get_json()["api_key_set"])
 
+    def test_ambiguous_question_returns_clarification_not_query(self):
+        from sparql import sparql_generator
+        from sparql.semantic_resolver import AmbiguousTerm, ResolvedTerm
+
+        ambiguous = (
+            AmbiguousTerm(
+                label="Utrecht",
+                candidates=(
+                    ResolvedTerm("gemeente", "Utrecht", "urn:gemeente-utrecht"),
+                    ResolvedTerm("provincie", "Utrecht", "urn:provincie-utrecht"),
+                ),
+            ),
+        )
+
+        with patch.object(
+            sparql_generator, "generate",
+            side_effect=sparql_generator.ClarificationNeeded(ambiguous),
+        ):
+            response = self.client.post(
+                "/api/generate-sparql", json={"question": "Monumenten in Utrecht"}
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertNotIn("query", body)
+        self.assertEqual(body["clarification"]["type"], "entity_ambiguity")
+        option_ids = {opt["id"] for opt in body["clarification"]["options"]}
+        self.assertEqual(option_ids, {"gemeente", "provincie"})
+
 
 if __name__ == "__main__":
     unittest.main()

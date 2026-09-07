@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from functools import lru_cache
 import logging
 import re
@@ -23,6 +24,24 @@ class ResolvedTerm:
     kind: str
     label: str
     uri: str
+
+
+@dataclass(frozen=True)
+class AmbiguousTerm:
+    """Een label dat op meerdere, niet-overlappende manieren op te vatten is."""
+
+    label: str
+    candidates: tuple[ResolvedTerm, ...]
+
+
+@dataclass(frozen=True)
+class ResolutionResult:
+    resolved: tuple[ResolvedTerm, ...] = field(default_factory=tuple)
+    ambiguous: tuple[AmbiguousTerm, ...] = field(default_factory=tuple)
+
+    @property
+    def has_ambiguity(self) -> bool:
+        return bool(self.ambiguous)
 
 
 def _normalise(value: str) -> str:
@@ -70,8 +89,18 @@ def _find_longest(question: str, terms: tuple[tuple[str, str], ...]) -> tuple[st
     return max(matches, key=lambda item: len(_normalise(item[0]))) if matches else None
 
 
-def resolve_question(question: str) -> list[ResolvedTerm]:
-    """Resolveer een plaatslabel naar een gemeentelijke of provinciale OWMS-URI."""
+def resolve_question(
+    question: str, disambiguation: dict[str, str] | None = None
+) -> ResolutionResult:
+    """Resolveer een plaatslabel naar een gemeentelijke of provinciale OWMS-URI.
+
+    Bij een expliciet "gemeente"/"provincie" in de vraag is er niets dubbelzinnigs
+    en wordt die keuze direct gebruikt. Matcht een naam zonder zo'n keyword op
+    zowel de gemeente- als de provincie-vocabulaire (bv. "Utrecht"), dan is dat een
+    echte tie die de resultatenset verandert: die wordt teruggegeven als
+    ``ambiguous`` in plaats van stilzwijgend opgelost, tenzij ``disambiguation``
+    al een keuze voor dat label bevat (normalised label -> "gemeente"/"provincie").
+    """
     q = _normalise(question)
     try:
         matches = {
@@ -88,20 +117,58 @@ def resolve_question(question: str) -> list[ResolvedTerm]:
     else:
         available = [(candidate, match) for candidate, match in matches.items() if match]
         if not available:
-            return []
-        kind, _ = max(
-            available,
-            key=lambda item: (len(_normalise(item[1][0])), item[0] == "gemeente"),
-        )
+            return ResolutionResult()
+
+        if len(available) > 1:
+            label = available[0][1][0]
+            normalised_disambiguation = {
+                _normalise(key): value for key, value in (disambiguation or {}).items()
+            }
+            override = normalised_disambiguation.get(_normalise(label))
+            available_by_kind = dict(available)
+            if override in available_by_kind:
+                kind = override
+                match = available_by_kind[kind]
+                return ResolutionResult(
+                    resolved=(ResolvedTerm(kind=kind, label=match[0], uri=match[1]),)
+                )
+
+            candidates = tuple(
+                ResolvedTerm(kind=candidate_kind, label=match[0], uri=match[1])
+                for candidate_kind, match in available
+            )
+            return ResolutionResult(ambiguous=(AmbiguousTerm(label=label, candidates=candidates),))
+
+        kind, _ = available[0]
 
     match = matches[kind]
     if not match:
-        return []
+        return ResolutionResult()
     label, uri = match
-    return [ResolvedTerm(kind=kind, label=label, uri=uri)]
+    return ResolutionResult(resolved=(ResolvedTerm(kind=kind, label=label, uri=uri),))
 
 
-def build_semantic_context(terms: list[ResolvedTerm]) -> str:
+def describe_ambiguity(ambiguous: tuple[AmbiguousTerm, ...]) -> dict:
+    """Zet de eerste onopgeloste ambiguïteit om in een JSON-serialiseerbare vraag."""
+    term = ambiguous[0]
+    return {
+        "type": "entity_ambiguity",
+        "message": (
+            f'"{term.label}" kan meerdere dingen zijn. Deze geven mogelijk '
+            "verschillende resultaten."
+        ),
+        "options": [
+            {
+                "id": candidate.kind,
+                "label": f"{candidate.kind.capitalize()} {candidate.label}",
+                "term_label": term.label,
+            }
+            for candidate in term.candidates
+        ],
+    }
+
+
+def build_semantic_context(terms: Sequence[ResolvedTerm]) -> str:
     if not terms:
         return ""
     lines = ["OPGELOSTE BEGRIPPEN. DEZE URI'S ZIJN VERPLICHT:"]

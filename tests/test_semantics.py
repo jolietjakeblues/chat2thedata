@@ -46,15 +46,49 @@ class ResolverTests(unittest.TestCase):
                 else (("Gelderland", "urn:gelderland"),)
             )
         load_terms.side_effect = terms
+        result = resolve_question("Welke kastelen staan in Gelderland?")
         self.assertEqual(
-            resolve_question("Welke kastelen staan in Gelderland?"),
-            [ResolvedTerm("provincie", "Gelderland", "urn:gelderland")],
+            result.resolved,
+            (ResolvedTerm("provincie", "Gelderland", "urn:gelderland"),),
+        )
+        self.assertEqual(result.ambiguous, ())
+
+    @patch("sparql.semantic_resolver._load_owms_terms")
+    def test_ambiguous_place_is_flagged_not_silently_resolved(self, load_terms):
+        load_terms.return_value = (("Utrecht", "urn:utrecht"),)
+        result = resolve_question("Monumenten in Utrecht")
+
+        self.assertEqual(result.resolved, ())
+        self.assertEqual(len(result.ambiguous), 1)
+        self.assertEqual(result.ambiguous[0].label, "Utrecht")
+        self.assertEqual(
+            {candidate.kind for candidate in result.ambiguous[0].candidates},
+            {"gemeente", "provincie"},
         )
 
     @patch("sparql.semantic_resolver._load_owms_terms")
-    def test_ambiguous_place_defaults_to_municipality(self, load_terms):
+    def test_ambiguity_resolved_via_disambiguation_override(self, load_terms):
         load_terms.return_value = (("Utrecht", "urn:utrecht"),)
-        self.assertEqual(resolve_question("Monumenten in Utrecht")[0].kind, "gemeente")
+        result = resolve_question(
+            "Monumenten in Utrecht", disambiguation={"Utrecht": "gemeente"}
+        )
+
+        self.assertEqual(result.ambiguous, ())
+        self.assertEqual(
+            result.resolved,
+            (ResolvedTerm("gemeente", "Utrecht", "urn:utrecht"),),
+        )
+
+    @patch("sparql.semantic_resolver._load_owms_terms")
+    def test_explicit_keyword_is_never_flagged_as_ambiguous(self, load_terms):
+        load_terms.return_value = (("Utrecht", "urn:utrecht"),)
+        result = resolve_question("Monumenten in de gemeente Utrecht")
+
+        self.assertEqual(result.ambiguous, ())
+        self.assertEqual(
+            result.resolved,
+            (ResolvedTerm("gemeente", "Utrecht", "urn:utrecht"),),
+        )
 
 
 class SemanticValidationTests(unittest.TestCase):

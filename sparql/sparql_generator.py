@@ -8,12 +8,20 @@ from pathlib import Path
 
 import config
 from sparql.postprocess import postprocess, has_count
-from sparql.semantic_resolver import build_semantic_context, resolve_question
+from sparql.semantic_resolver import ResolutionResult, build_semantic_context, resolve_question
 from sparql.semantic_validator import validate_completeness, validate_semantics
 
 logger = logging.getLogger(__name__)
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+
+class ClarificationNeeded(Exception):
+    """De vraag is echt dubbelzinnig; de gebruiker moet eerst kiezen."""
+
+    def __init__(self, ambiguous):
+        self.ambiguous = ambiguous
+        super().__init__("Vraag is dubbelzinnig, verduidelijking nodig")
 
 
 def _load_prompt(name: str) -> str:
@@ -120,26 +128,37 @@ def _generate(question: str, system_prompt: str) -> str:
     )
 
 
-def generate(question: str, mode: str) -> str:
+def generate(question: str, mode: str, disambiguation: dict[str, str] | None = None) -> str:
     """
     Genereer een SPARQL query op basis van een natuurlijke vraag.
 
     Args:
-        question: De vraag in natuurlijke taal.
-        mode:     'lijst' of 'telling'.
+        question:       De vraag in natuurlijke taal.
+        mode:           'lijst' of 'telling'.
+        disambiguation: Optionele keuze uit een eerdere clarification-ronde
+                         (genormaliseerd label -> "gemeente"/"provincie").
 
     Returns:
         Een nabewerkte SPARQL query als string.
+
+    Raises:
+        ClarificationNeeded: als de vraag een naam bevat die zowel gemeente
+            als provincie kan zijn en er geen expliciet "gemeente"/"provincie"
+            in de vraag staat, en er (nog) geen disambiguation is opgegeven.
     """
 
     system_prompt = _build_system_prompt(mode)
 
     try:
-        resolved_terms = resolve_question(question)
+        resolution = resolve_question(question, disambiguation)
     except RuntimeError as exc:
         logger.warning("Gemeente/provincie-resolutie overgeslagen: %s", exc)
-        resolved_terms = []
+        resolution = ResolutionResult()
 
+    if resolution.has_ambiguity:
+        raise ClarificationNeeded(resolution.ambiguous)
+
+    resolved_terms = resolution.resolved
     semantic_context = build_semantic_context(resolved_terms)
     prompt_input = f"{question}\n\n{semantic_context}" if semantic_context else question
 
