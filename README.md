@@ -29,6 +29,7 @@ De applicatie is geoptimaliseerd voor de Cultureel Erfgoed Ontologie (CEO) en be
 - Ondersteuning voor ruimtelijke queries (geof:sfWithin, geof:sfIntersects), met automatische lokale fallback bij endpointfouten (zie [Ruimtelijke queries en foutafhandeling](#ruimtelijke-queries-en-foutafhandeling))
 - Automatische detectie van lijst- of tellingvragen
 - Automatische resolutie van gemeente-/provincienamen naar de officiële OWMS-URI
+- Bij een plaatsnaam die zowel gemeente als provincie kan zijn (bv. "Utrecht"), vraagt de app het na met een verduidelijkingskaart in plaats van stil te kiezen — behalve als de vraag zelf al "gemeente" of "provincie" bevat
 - Rate limiting, optionele toegangscode en een maximale vraaglengte om misbruik van de (betaalde) LLM-provider te voorkomen
 
 Ondersteunde objecttypen:
@@ -106,6 +107,8 @@ sparql/
 
 tests/
   test_regressions.py          — regressietests (pytest/unittest)
+  test_semantics.py            — resolver-/validator-tests op semantisch niveau
+  test_sparql_generator.py     — tests voor de generatiepijplijn incl. verduidelijkingsstap
 
 config.py                      — configuratie, laadt .env
 app.py                          — Flask backend
@@ -130,8 +133,8 @@ LICENSE                         — MIT-licentietekst
 ## Repository clonen
 
 ```bash
-git clone https://github.com/jolietjakeblues/ldv-talk-2-your-data.git
-cd ldv-talk-2-your-data
+git clone https://github.com/jolietjakeblues/chat2thedata.git
+cd chat2thedata
 ```
 
 ## Virtual environment aanmaken
@@ -339,7 +342,7 @@ Ruimtelijke joins (`geof:sfWithin`, `geof:sfIntersects`) draaien op het Virtuoso
 - Sommige geometrieën ontbreken of zijn onherstelbaar ongeldig in de brondata; die rijen worden overgeslagen in plaats van getoond.
 - Sommige objecttypen gebruiken inconsistente CEO-structuren.
 - Grote prompts kunnen bij kleinere lokale LLM's (via Ollama) incomplete of licht afwijkende SPARQL opleveren; de app corrigeert een aantal bekende afwijkingen automatisch, maar niet alles.
-- Plaatsnamen die zowel gemeente als provincie kunnen zijn (bijvoorbeeld Utrecht, Groningen) worden bij twijfel als gemeente geïnterpreteerd, tenzij de vraag het woord "provincie" bevat.
+- Plaats/woonplaats (bv. "Zeist" als plaats binnen een andere gemeente) wordt nog niet als aparte kandidaat herkend naast gemeente/provincie — alleen de gemeente-/provincie-ambiguïteit levert een verduidelijkingsvraag op.
 - De `?rm`/`?complex`/... hoofdobject-URI eindigt op het interne CHO-nummer (cultuurhistorisch objectnummer), niet op het officiële rijksmonumentnummer — de frontend toont dat veld daarom als kale "bron"-link in plaats van als getal, om verwarring met het echte nummer te voorkomen.
 - De rate limiter gebruikt in-memory opslag; bij meerdere gunicorn-workers of Render-instances telt de limiet niet gedeeld mee (zie Deployment met Render hierboven).
 
