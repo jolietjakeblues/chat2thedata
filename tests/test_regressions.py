@@ -317,6 +317,28 @@ class AnswerTests(unittest.TestCase):
         }
         self.assertIn("6331", answer_generator.generate("Hoeveel?", results))
 
+    def test_caveat_is_appended_when_present(self):
+        results = {
+            "head": {"vars": ["aantal"]},
+            "results": {"bindings": [
+                {"aantal": {"type": "literal", "value": "6331"}}
+            ]},
+        }
+        answer = answer_generator.generate("Hoeveel?", results, caveat="dit dekt niet alles")
+        self.assertIn("6331", answer)
+        self.assertIn("dit dekt niet alles", answer)
+
+    def test_no_caveat_leaves_answer_unchanged(self):
+        results = {
+            "head": {"vars": ["aantal"]},
+            "results": {"bindings": [
+                {"aantal": {"type": "literal", "value": "6331"}}
+            ]},
+        }
+        with_none = answer_generator.generate("Hoeveel?", results, caveat=None)
+        without_arg = answer_generator.generate("Hoeveel?", results)
+        self.assertEqual(with_none, without_arg)
+
 
 class ApiTests(unittest.TestCase):
     def setUp(self):
@@ -372,6 +394,30 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(body["clarification"]["type"], "entity_ambiguity")
         option_ids = {opt["id"] for opt in body["clarification"]["options"]}
         self.assertEqual(option_ids, {"gemeente", "provincie"})
+
+    def test_unanswerable_question_returns_limitation_clarification(self):
+        from sparql import sparql_generator
+        from sparql.answerability import detect_limitation
+
+        limitation = detect_limitation("Welke rijksmonumenten liggen bij een begraafplaats?")
+
+        with patch.object(
+            sparql_generator, "generate",
+            side_effect=sparql_generator.AnswerabilityLimitationNeeded(limitation),
+        ):
+            response = self.client.post(
+                "/api/generate-sparql",
+                json={"question": "Welke rijksmonumenten liggen bij een begraafplaats?"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertNotIn("query", body)
+        self.assertEqual(body["clarification"]["type"], "answerability_limitation")
+        option_ids = {opt["id"] for opt in body["clarification"]["options"]}
+        self.assertEqual(option_ids, {"functie_begraafplaats", "complex_onderdeel"})
+        for option in body["clarification"]["options"]:
+            self.assertIn("caveat", option)
 
 
 if __name__ == "__main__":

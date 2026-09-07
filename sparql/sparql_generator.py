@@ -4,9 +4,11 @@ Provider wordt bepaald via LLM_PROVIDER in config/environment.
 """
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 import config
+from sparql.answerability import detect_limitation
 from sparql.postprocess import postprocess, has_count
 from sparql.semantic_resolver import ResolutionResult, build_semantic_context, resolve_question
 from sparql.semantic_validator import validate_completeness, validate_semantics
@@ -22,6 +24,20 @@ class ClarificationNeeded(Exception):
     def __init__(self, ambiguous):
         self.ambiguous = ambiguous
         super().__init__("Vraag is dubbelzinnig, verduidelijking nodig")
+
+
+class AnswerabilityLimitationNeeded(Exception):
+    """De vraag heeft geen eenduidige SPARQL-vertaling; leg de beperking uit."""
+
+    def __init__(self, limitation):
+        self.limitation = limitation
+        super().__init__("Vraag heeft geen eenduidige SPARQL-vertaling")
+
+
+@dataclass(frozen=True)
+class GenerationResult:
+    query: str
+    caveat: str | None = None
 
 
 def _load_prompt(name: str) -> str:
@@ -128,23 +144,34 @@ def _generate(question: str, system_prompt: str) -> str:
     )
 
 
-def generate(question: str, mode: str, disambiguation: dict[str, str] | None = None) -> str:
+def generate(
+    question: str,
+    mode: str,
+    disambiguation: dict[str, str] | None = None,
+    limitation_choice: str | None = None,
+) -> GenerationResult:
     """
     Genereer een SPARQL query op basis van een natuurlijke vraag.
 
     Args:
-        question:       De vraag in natuurlijke taal.
-        mode:           'lijst' of 'telling'.
-        disambiguation: Optionele keuze uit een eerdere clarification-ronde
-                         (genormaliseerd label -> "gemeente"/"provincie").
+        question:          De vraag in natuurlijke taal.
+        mode:              'lijst' of 'telling'.
+        disambiguation:    Optionele keuze uit een eerdere entiteits-clarificatie
+                            (genormaliseerd label -> "gemeente"/"provincie").
+        limitation_choice: Optionele keuze uit een eerdere beperkings-clarificatie
+                            (id van de gekozen PartialOption).
 
     Returns:
-        Een nabewerkte SPARQL query als string.
+        GenerationResult met de nabewerkte SPARQL query en, als een
+        deelinterpretatie is gekozen, de bijbehorende kanttekening.
 
     Raises:
         ClarificationNeeded: als de vraag een naam bevat die zowel gemeente
             als provincie kan zijn en er geen expliciet "gemeente"/"provincie"
             in de vraag staat, en er (nog) geen disambiguation is opgegeven.
+        AnswerabilityLimitationNeeded: als de vraag geen eenduidige SPARQL-
+            vertaling heeft (zie sparql/answerability.py) en er nog geen
+            limitation_choice is opgegeven.
     """
 
     system_prompt = _build_system_prompt(mode)
@@ -158,9 +185,27 @@ def generate(question: str, mode: str, disambiguation: dict[str, str] | None = N
     if resolution.has_ambiguity:
         raise ClarificationNeeded(resolution.ambiguous)
 
+    caveat = None
+    chosen_hint = None
+
+    limitation = detect_limitation(question)
+    if limitation is not None:
+        if limitation_choice is None:
+            raise AnswerabilityLimitationNeeded(limitation)
+
+        chosen = next(
+            (o for o in limitation.partial_options if o.id == limitation_choice), None
+        )
+        if chosen is not None:
+            caveat = chosen.caveat
+            chosen_hint = chosen.prompt_hint
+
     resolved_terms = resolution.resolved
     semantic_context = build_semantic_context(resolved_terms)
     prompt_input = f"{question}\n\n{semantic_context}" if semantic_context else question
+
+    if chosen_hint:
+        prompt_input = f"{prompt_input}\n\n{chosen_hint}"
 
     logger.info(
         "Query genereren via %s (modus: %s)",
@@ -200,4 +245,4 @@ def generate(question: str, mode: str, disambiguation: dict[str, str] | None = N
 
     logger.info("Query gegenereerd (%d tekens)", len(query))
 
-    return query
+    return GenerationResult(query=query, caveat=caveat)
