@@ -11,7 +11,9 @@ import config
 from sparql.answerability import detect_limitation
 from sparql.postprocess import postprocess, has_count
 from sparql.semantic_resolver import ResolutionResult, build_semantic_context, resolve_question
-from sparql.semantic_validator import validate_completeness, validate_semantics
+from sparql.semantic_validator import (
+    describe_property_choice, validate_completeness, validate_semantics,
+)
 from sparql.syntax_validator import validate_syntax
 
 logger = logging.getLogger(__name__)
@@ -42,7 +44,7 @@ class SparqlSyntaxInvalid(Exception):
 @dataclass(frozen=True)
 class GenerationResult:
     query: str
-    caveat: str | None = None
+    caveats: tuple[str, ...] = ()
 
 
 def _load_prompt(name: str) -> str:
@@ -167,8 +169,10 @@ def generate(
                             (id van de gekozen PartialOption).
 
     Returns:
-        GenerationResult met de nabewerkte SPARQL query en, als een
-        deelinterpretatie is gekozen, de bijbehorende kanttekening.
+        GenerationResult met de nabewerkte SPARQL query en alle van
+        toepassing zijnde kanttekeningen (bv. een gekozen deelinterpretatie,
+        of een vage "soort/aard/type"-vraag waarvan het gebruikte
+        property-pad wordt toegelicht).
 
     Raises:
         ClarificationNeeded: als de vraag een naam bevat die zowel gemeente
@@ -190,7 +194,7 @@ def generate(
     if resolution.has_ambiguity:
         raise ClarificationNeeded(resolution.ambiguous)
 
-    caveat = None
+    limitation_caveat = None
     chosen_hint = None
 
     limitation = detect_limitation(question)
@@ -202,7 +206,7 @@ def generate(
             (o for o in limitation.partial_options if o.id == limitation_choice), None
         )
         if chosen is not None:
-            caveat = chosen.caveat
+            limitation_caveat = chosen.caveat
             chosen_hint = chosen.prompt_hint
 
     resolved_terms = resolution.resolved
@@ -257,4 +261,7 @@ def generate(
 
     logger.info("Query gegenereerd (%d tekens)", len(query))
 
-    return GenerationResult(query=query, caveat=caveat)
+    caveats = tuple(
+        c for c in (limitation_caveat, describe_property_choice(question, query)) if c
+    )
+    return GenerationResult(query=query, caveats=caveats)

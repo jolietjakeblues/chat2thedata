@@ -8,3 +8,4 @@ ollama>=0.4.0
 gunicorn>=22.0
 shapely>=2.0
 rdflib>=7.0
+sentry-sdk[flask]>=2.0

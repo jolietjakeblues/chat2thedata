@@ -2293,7 +2293,7 @@ async function ask() {
     }
 
     const sparqlQuery = d1.query;
-    const caveat = d1.caveat || null;
+    const caveats = d1.caveats || [];
 
     content.innerHTML = renderSparqlDetails(sparqlQuery);
 
@@ -2316,7 +2316,7 @@ async function ask() {
       question: q,
       results: sparqlResults,
       total: lastBindings.length,
-      caveat: caveat,
+      caveats: caveats,
     });
 
     const loadingCardsAfterAnswer = content.querySelectorAll('.card');

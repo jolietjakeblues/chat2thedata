@@ -373,9 +373,20 @@ class AnswerTests(unittest.TestCase):
                 {"aantal": {"type": "literal", "value": "6331"}}
             ]},
         }
-        answer = answer_generator.generate("Hoeveel?", results, caveat="dit dekt niet alles")
+        answer = answer_generator.generate("Hoeveel?", results, caveats=("dit dekt niet alles",))
         self.assertIn("6331", answer)
         self.assertIn("dit dekt niet alles", answer)
+
+    def test_multiple_caveats_are_each_appended(self):
+        results = {
+            "head": {"vars": ["aantal"]},
+            "results": {"bindings": [
+                {"aantal": {"type": "literal", "value": "6331"}}
+            ]},
+        }
+        answer = answer_generator.generate("Hoeveel?", results, caveats=("eerste kanttekening", "tweede kanttekening"))
+        self.assertIn("eerste kanttekening", answer)
+        self.assertIn("tweede kanttekening", answer)
 
     def test_no_caveat_leaves_answer_unchanged(self):
         results = {
@@ -384,7 +395,7 @@ class AnswerTests(unittest.TestCase):
                 {"aantal": {"type": "literal", "value": "6331"}}
             ]},
         }
-        with_none = answer_generator.generate("Hoeveel?", results, caveat=None)
+        with_none = answer_generator.generate("Hoeveel?", results, caveats=())
         without_arg = answer_generator.generate("Hoeveel?", results)
         self.assertEqual(with_none, without_arg)
 
@@ -401,6 +412,20 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["error"], "Verwacht een JSON-object")
+
+    def test_unexpected_error_is_reported_to_sentry(self):
+        import app as app_module
+        from sparql import sparql_generator
+
+        boom = RuntimeError("onverwacht")
+        with patch.object(sparql_generator, "generate", side_effect=boom), \
+                patch.object(app_module, "sentry_sdk") as mock_sentry:
+            response = self.client.post(
+                "/api/generate-sparql", json={"question": "Hoeveel rijksmonumenten zijn er?"}
+            )
+
+        self.assertEqual(response.status_code, 500)
+        mock_sentry.capture_exception.assert_called_once_with(boom)
 
     def test_root_serves_map_frontend(self):
         response = self.client.get("/")

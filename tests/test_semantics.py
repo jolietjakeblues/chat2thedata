@@ -9,7 +9,9 @@ from sparql.semantic_resolver import (
     OWMS_GEMEENTE_CLASS, OWMS_PROVINCIE_CLASS, ResolvedTerm,
     _find_longest, build_semantic_context, resolve_question,
 )
-from sparql.semantic_validator import requested_limit, validate_semantics
+from sparql.semantic_validator import (
+    describe_property_choice, requested_limit, validate_semantics,
+)
 
 
 AMSTERDAM = ResolvedTerm(
@@ -205,6 +207,35 @@ class SemanticContextTests(unittest.TestCase):
             (ResolvedTerm("gemeente", "Amsterdam", "http://standaarden.overheid.nl/owms/terms/Amsterdam"),)
         )
         self.assertIn("<http://standaarden.overheid.nl/owms/terms/Amsterdam>", context)
+
+
+class DescribePropertyChoiceTests(unittest.TestCase):
+    def test_fires_on_vague_word_and_names_monumentaard(self):
+        query = (
+            "SELECT ?rm WHERE { ?rm a ceo:Rijksmonument . "
+            "?rm ceo:heeftMonumentAard ?aard }"
+        )
+        caveat = describe_property_choice("Wat voor soort monument is dit?", query)
+        self.assertIsNotNone(caveat)
+        self.assertIn("monumentaard", caveat)
+
+    def test_fires_on_vague_word_and_names_functie(self):
+        query = (
+            "SELECT ?rm WHERE { ?rm a ceo:Rijksmonument . "
+            "?rm ceo:heeftOorspronkelijkeFunctie ?f }"
+        )
+        caveat = describe_property_choice("Welke aard heeft dit rijksmonument?", query)
+        self.assertIsNotNone(caveat)
+        self.assertIn("functie", caveat)
+
+    def test_no_vague_word_gives_no_caveat(self):
+        query = "SELECT ?rm WHERE { ?rm a ceo:Rijksmonument . ?rm ceo:heeftType ?t }"
+        self.assertIsNone(describe_property_choice("Welke rijksmonumenten staan in Zeist?", query))
+
+    def test_vague_word_but_no_matching_path_gives_no_caveat(self):
+        # Het LLM negeerde de vraag volledig -- ander soort fout, niet dit type.
+        query = "SELECT ?rm WHERE { ?rm a ceo:Rijksmonument }"
+        self.assertIsNone(describe_property_choice("Wat voor soort monument is dit?", query))
 
 
 class SemanticValidationTests(unittest.TestCase):

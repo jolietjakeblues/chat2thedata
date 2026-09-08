@@ -55,6 +55,9 @@ APP_ACCESS_CODE = os.getenv("APP_ACCESS_CODE", "")
 RATE_LIMIT_LLM = os.getenv("RATE_LIMIT_LLM", "10/minute;100/day")
 RATE_LIMIT_SPARQL = os.getenv("RATE_LIMIT_SPARQL", "30/minute;300/day")
 
+# Error tracking. Leeg = uitgeschakeld (zelfde patroon als APP_ACCESS_CODE).
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+
 
 def active_api_key() -> str:
     """Geef de API-key van de actieve provider terug; Ollama heeft geen key."""
