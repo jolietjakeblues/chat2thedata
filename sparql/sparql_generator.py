@@ -12,6 +12,7 @@ from sparql.answerability import detect_limitation
 from sparql.postprocess import postprocess, has_count
 from sparql.semantic_resolver import ResolutionResult, build_semantic_context, resolve_question
 from sparql.semantic_validator import validate_completeness, validate_semantics
+from sparql.syntax_validator import validate_syntax
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,10 @@ class AnswerabilityLimitationNeeded(Exception):
     def __init__(self, limitation):
         self.limitation = limitation
         super().__init__("Vraag heeft geen eenduidige SPARQL-vertaling")
+
+
+class SparqlSyntaxInvalid(Exception):
+    """Ook na één correctiepoging nog geen grammaticaal geldige SPARQL."""
 
 
 @dataclass(frozen=True)
@@ -229,7 +234,8 @@ def generate(
 
     semantic_errors = validate_semantics(question, query, resolved_terms)
     completeness_errors = validate_completeness(question, query)
-    all_errors = semantic_errors + completeness_errors
+    syntax_errors = validate_syntax(query)
+    all_errors = semantic_errors + completeness_errors + syntax_errors
 
     if all_errors:
         logger.warning("Validatie gaf correcties: %s", all_errors)
@@ -242,6 +248,12 @@ def generate(
 
         query = _generate(corrected, system_prompt)
         query = postprocess(query, mode)
+
+        # Deterministisch, geen netwerk-/LLM-kosten -- voorkomt dat een nog
+        # steeds syntactisch kapotte query naar het RCE-endpoint gaat.
+        remaining_syntax_errors = validate_syntax(query)
+        if remaining_syntax_errors:
+            raise SparqlSyntaxInvalid(remaining_syntax_errors[0])
 
     logger.info("Query gegenereerd (%d tekens)", len(query))
 

@@ -559,6 +559,13 @@ def generate(question: str, results: dict[str, Any], caveat: str | None = None) 
         geospatial_summary = _summarize_geospatial_list(question, vars_, bindings)
         answer = geospatial_summary or _summarize_generic_list(question, vars_, bindings)
 
+    if results.get("incomplete_due_to_limit"):
+        answer += (
+            "\n\nLet op: de ruimtelijke berekening moest terugvallen op een lokale "
+            "benadering en het kandidaatveld raakte daarbij een bovengrens — dit "
+            "resultaat kan onvolledig zijn."
+        )
+
     if caveat:
         answer = f"{answer}\n\nLet op: {caveat}"
 
