@@ -79,6 +79,40 @@ WHERE {{
     )
 
 
+@lru_cache(maxsize=1)
+def _load_woonplaats_terms() -> tuple[tuple[str, str], ...]:
+    """Haal alle bekende woonplaatsnamen op (ceo:woonplaatsnaam op ceo:BAGRelatie).
+
+    Anders dan gemeente/provincie heeft een woonplaatsnaam geen eigen
+    resolvebare SKOS-concept-URI in OWMS -- het is een kale string-property.
+    Geeft daarom (naam, naam)-paren terug (label == uri) zodat _find_longest()
+    ongewijzigd herbruikbaar is; het "uri"-veld draagt hier de exacte,
+    bevestigde canonieke schrijfwijze, geen resolvebare URI.
+    """
+    query = """
+PREFIX ceo: <https://linkeddata.cultureelerfgoed.nl/def/ceo#>
+PREFIX graph: <https://linkeddata.cultureelerfgoed.nl/graph/>
+SELECT DISTINCT ?naam WHERE {
+  GRAPH graph:instanties-rce {
+    ?bag ceo:woonplaatsnaam ?naam .
+  }
+}
+""".strip()
+    response = requests.get(
+        config.SPARQL_ENDPOINT,
+        params={"query": query, "format": "json"},
+        headers={"Accept": "application/sparql-results+json"},
+        timeout=15,
+    )
+    response.raise_for_status()
+    bindings = response.json().get("results", {}).get("bindings", [])
+    return tuple(
+        (row["naam"]["value"], row["naam"]["value"])
+        for row in bindings
+        if row.get("naam", {}).get("value")
+    )
+
+
 def _find_longest(question: str, terms: tuple[tuple[str, str], ...]) -> tuple[str, str] | None:
     normalised_question = _normalise(question)
     matches = [
@@ -106,14 +140,21 @@ def resolve_question(
         matches = {
             "gemeente": _find_longest(question, _load_owms_terms(OWMS_GEMEENTE_CLASS)),
             "provincie": _find_longest(question, _load_owms_terms(OWMS_PROVINCIE_CLASS)),
+            "plaats": _find_longest(question, _load_woonplaats_terms()),
         }
     except requests.RequestException as exc:
-        raise RuntimeError("OWMS-resolutie via het RCE endpoint is mislukt") from exc
+        raise RuntimeError("OWMS/woonplaats-resolutie via het RCE endpoint is mislukt") from exc
 
     if "provincie" in q:
         kind = "provincie"
     elif "gemeente" in q:
         kind = "gemeente"
+    elif "woonplaats" in q:
+        # Bewust alleen "woonplaats", niet kaal "plaats": dat laatste komt als
+        # substring voor in courante woorden (vindplaats, standplaats,
+        # geboorteplaats) en zou op de genormaliseerde vraagtekst ten onrechte
+        # matchen.
+        kind = "plaats"
     else:
         available = [(candidate, match) for candidate, match in matches.items() if match]
         if not available:
@@ -171,12 +212,22 @@ def describe_ambiguity(ambiguous: tuple[AmbiguousTerm, ...]) -> dict:
 def build_semantic_context(terms: Sequence[ResolvedTerm]) -> str:
     if not terms:
         return ""
-    lines = ["OPGELOSTE BEGRIPPEN. DEZE URI'S ZIJN VERPLICHT:"]
+    lines = ["OPGELOSTE BEGRIPPEN. DEZE URI'S/WAARDEN ZIJN VERPLICHT:"]
     for term in terms:
+        if term.kind == "plaats":
+            lines.append(
+                f'- plaats (woonplaats) "{term.label}"; gebruik via '
+                "ceo:heeftBasisregistratieRelatie -> ceo:heeftBAGRelatie -> "
+                f'ceo:woonplaatsnaam, EXACTE match "{term.label}" (geen CONTAINS/LCASE).'
+            )
+            continue
         property_name = "ceo:heeftGemeente" if term.kind == "gemeente" else "ceo:heeftProvincie"
         lines.append(
             f'- {term.kind} "{term.label}" = <{term.uri}>; '
             f"gebruik via ceo:heeftBasisregistratieRelatie en {property_name}."
         )
-    lines.append("Gebruik geen labeltekst, BRK/gemeentenaam of BAG/woonplaatsnaam als vervanging.")
+    lines.append(
+        "Gebruik geen labeltekst, BRK/gemeentenaam of vrije CONTAINS-matching op "
+        "woonplaatsnaam als vervanging voor de hierboven opgegeven URI's/exacte waarden."
+    )
     return "\n".join(lines)
