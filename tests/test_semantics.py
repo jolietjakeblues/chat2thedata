@@ -1,13 +1,13 @@
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("LLM_PROVIDER", "ollama")
 
 from sparql.executor import _enrich_requested_fields, _enrichment_query
 from sparql.semantic_resolver import (
     OWMS_GEMEENTE_CLASS, OWMS_PROVINCIE_CLASS, ResolvedTerm,
-    _find_longest, resolve_question,
+    _find_longest, build_semantic_context, resolve_question,
 )
 from sparql.semantic_validator import requested_limit, validate_semantics
 
@@ -37,8 +37,9 @@ class ResolverTests(unittest.TestCase):
             ("Amsterdam", "urn:amsterdam"),
         )
 
+    @patch("sparql.semantic_resolver._load_woonplaats_terms")
     @patch("sparql.semantic_resolver._load_owms_terms")
-    def test_province_is_detected_without_province_word(self, load_terms):
+    def test_province_is_detected_without_province_word(self, load_terms, load_woonplaats):
         def terms(class_uri):
             return (
                 (("Arnhem", "urn:arnhem"),)
@@ -46,6 +47,7 @@ class ResolverTests(unittest.TestCase):
                 else (("Gelderland", "urn:gelderland"),)
             )
         load_terms.side_effect = terms
+        load_woonplaats.return_value = ()
         result = resolve_question("Welke kastelen staan in Gelderland?")
         self.assertEqual(
             result.resolved,
@@ -53,9 +55,11 @@ class ResolverTests(unittest.TestCase):
         )
         self.assertEqual(result.ambiguous, ())
 
+    @patch("sparql.semantic_resolver._load_woonplaats_terms")
     @patch("sparql.semantic_resolver._load_owms_terms")
-    def test_ambiguous_place_is_flagged_not_silently_resolved(self, load_terms):
+    def test_ambiguous_place_is_flagged_not_silently_resolved(self, load_terms, load_woonplaats):
         load_terms.return_value = (("Utrecht", "urn:utrecht"),)
+        load_woonplaats.return_value = ()
         result = resolve_question("Monumenten in Utrecht")
 
         self.assertEqual(result.resolved, ())
@@ -66,9 +70,11 @@ class ResolverTests(unittest.TestCase):
             {"gemeente", "provincie"},
         )
 
+    @patch("sparql.semantic_resolver._load_woonplaats_terms")
     @patch("sparql.semantic_resolver._load_owms_terms")
-    def test_ambiguity_resolved_via_disambiguation_override(self, load_terms):
+    def test_ambiguity_resolved_via_disambiguation_override(self, load_terms, load_woonplaats):
         load_terms.return_value = (("Utrecht", "urn:utrecht"),)
+        load_woonplaats.return_value = ()
         result = resolve_question(
             "Monumenten in Utrecht", disambiguation={"Utrecht": "gemeente"}
         )
@@ -79,9 +85,11 @@ class ResolverTests(unittest.TestCase):
             (ResolvedTerm("gemeente", "Utrecht", "urn:utrecht"),),
         )
 
+    @patch("sparql.semantic_resolver._load_woonplaats_terms")
     @patch("sparql.semantic_resolver._load_owms_terms")
-    def test_explicit_keyword_is_never_flagged_as_ambiguous(self, load_terms):
+    def test_explicit_keyword_is_never_flagged_as_ambiguous(self, load_terms, load_woonplaats):
         load_terms.return_value = (("Utrecht", "urn:utrecht"),)
+        load_woonplaats.return_value = ()
         result = resolve_question("Monumenten in de gemeente Utrecht")
 
         self.assertEqual(result.ambiguous, ())
@@ -89,6 +97,114 @@ class ResolverTests(unittest.TestCase):
             result.resolved,
             (ResolvedTerm("gemeente", "Utrecht", "urn:utrecht"),),
         )
+
+    @patch("sparql.semantic_resolver._load_woonplaats_terms")
+    @patch("sparql.semantic_resolver._load_owms_terms")
+    def test_three_way_tie_on_utrecht_is_flagged(self, load_terms, load_woonplaats):
+        # "Utrecht" is tegelijk gemeentenaam, provincienaam en woonplaatsnaam.
+        load_terms.return_value = (("Utrecht", "urn:utrecht"),)
+        load_woonplaats.return_value = (("Utrecht", "Utrecht"),)
+        result = resolve_question("Monumenten in Utrecht")
+
+        self.assertEqual(result.resolved, ())
+        self.assertEqual(len(result.ambiguous), 1)
+        self.assertEqual(
+            {candidate.kind for candidate in result.ambiguous[0].candidates},
+            {"gemeente", "provincie", "plaats"},
+        )
+
+    @patch("sparql.semantic_resolver._load_woonplaats_terms")
+    @patch("sparql.semantic_resolver._load_owms_terms")
+    def test_two_way_tie_plaats_versus_gemeente(self, load_terms, load_woonplaats):
+        # "Zeist": wel gemeente en plaats, geen provincie -- de casus die dit
+        # traject in gang zette.
+        def terms(class_uri):
+            return (("Zeist", "urn:gemeente-zeist"),) if class_uri == OWMS_GEMEENTE_CLASS else ()
+        load_terms.side_effect = terms
+        load_woonplaats.return_value = (("Zeist", "Zeist"),)
+        result = resolve_question("Welke rijksmonumenten staan er in Zeist?")
+
+        self.assertEqual(result.resolved, ())
+        self.assertEqual(
+            {candidate.kind for candidate in result.ambiguous[0].candidates},
+            {"gemeente", "plaats"},
+        )
+
+    @patch("sparql.semantic_resolver._load_woonplaats_terms")
+    @patch("sparql.semantic_resolver._load_owms_terms")
+    def test_explicit_woonplaats_keyword_resolves_without_ambiguity(self, load_terms, load_woonplaats):
+        def terms(class_uri):
+            return (("Zeist", "urn:gemeente-zeist"),) if class_uri == OWMS_GEMEENTE_CLASS else ()
+        load_terms.side_effect = terms
+        load_woonplaats.return_value = (("Zeist", "Zeist"),)
+        result = resolve_question("Welke rijksmonumenten staan er in de woonplaats Zeist?")
+
+        self.assertEqual(result.ambiguous, ())
+        self.assertEqual(result.resolved, (ResolvedTerm("plaats", "Zeist", "Zeist"),))
+
+    @patch("sparql.semantic_resolver._load_woonplaats_terms")
+    @patch("sparql.semantic_resolver._load_owms_terms")
+    def test_bare_plaats_word_does_not_trigger_explicit_keyword(self, load_terms, load_woonplaats):
+        # Regressietest tegen het substring-risico: "plaats" komt voor in
+        # "vindplaats" en zou zonder woordgrens-bewuste check ten onrechte de
+        # expliciete-keyword-tak triggeren.
+        def terms(class_uri):
+            return (("Zeist", "urn:gemeente-zeist"),) if class_uri == OWMS_GEMEENTE_CLASS else ()
+        load_terms.side_effect = terms
+        load_woonplaats.return_value = (("Zeist", "Zeist"),)
+        result = resolve_question("Welke vindplaats in Zeist heeft de meeste vondsten?")
+
+        # Geen expliciete "woonplaats" in de vraag -> normale tie-break, niet
+        # automatisch kind="plaats".
+        self.assertEqual(
+            {candidate.kind for candidate in result.ambiguous[0].candidates},
+            {"gemeente", "plaats"},
+        )
+
+    @patch("sparql.semantic_resolver._load_woonplaats_terms")
+    @patch("sparql.semantic_resolver._load_owms_terms")
+    def test_ambiguity_resolved_via_disambiguation_override_to_plaats(self, load_terms, load_woonplaats):
+        def terms(class_uri):
+            return (("Zeist", "urn:gemeente-zeist"),) if class_uri == OWMS_GEMEENTE_CLASS else ()
+        load_terms.side_effect = terms
+        load_woonplaats.return_value = (("Zeist", "Zeist"),)
+        result = resolve_question(
+            "Welke rijksmonumenten staan er in Zeist?", disambiguation={"Zeist": "plaats"}
+        )
+
+        self.assertEqual(result.ambiguous, ())
+        self.assertEqual(result.resolved, (ResolvedTerm("plaats", "Zeist", "Zeist"),))
+
+
+class LoadWoonplaatsTermsTests(unittest.TestCase):
+    def test_parses_sparql_json_into_naam_naam_pairs(self):
+        from sparql.semantic_resolver import _load_woonplaats_terms
+
+        self.addCleanup(_load_woonplaats_terms.cache_clear)
+        fake_response = MagicMock()
+        fake_response.json.return_value = {
+            "results": {"bindings": [{"naam": {"value": "Zeist"}}, {"naam": {"value": "Utrecht"}}]}
+        }
+        with patch("sparql.semantic_resolver.requests.get", return_value=fake_response) as mock_get:
+            terms = _load_woonplaats_terms()
+
+        fake_response.raise_for_status.assert_called_once()
+        self.assertEqual(terms, (("Zeist", "Zeist"), ("Utrecht", "Utrecht")))
+        self.assertIn("woonplaatsnaam", mock_get.call_args.kwargs["params"]["query"])
+
+
+class SemanticContextTests(unittest.TestCase):
+    def test_plaats_term_uses_exact_match_instruction_not_uri(self):
+        context = build_semantic_context((ResolvedTerm("plaats", "Zeist", "Zeist"),))
+        self.assertIn("EXACTE match", context)
+        self.assertIn("ceo:woonplaatsnaam", context)
+        self.assertNotIn("<Zeist>", context)
+
+    def test_gemeente_term_still_uses_uri_form(self):
+        context = build_semantic_context(
+            (ResolvedTerm("gemeente", "Amsterdam", "http://standaarden.overheid.nl/owms/terms/Amsterdam"),)
+        )
+        self.assertIn("<http://standaarden.overheid.nl/owms/terms/Amsterdam>", context)
 
 
 class SemanticValidationTests(unittest.TestCase):
