@@ -11,9 +11,11 @@ import logging
 import os
 
 import requests
+import sentry_sdk
 from flask import Flask, jsonify, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from sentry_sdk.integrations.flask import FlaskIntegration
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import config
@@ -31,6 +33,15 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+if config.SENTRY_DSN:
+    # traces_sample_rate=0: alleen fouten, geen performance-tracing (geen
+    # reden om daar nu al voor te betalen/data over te verzamelen).
+    sentry_sdk.init(
+        dsn=config.SENTRY_DSN,
+        integrations=[FlaskIntegration()],
+        traces_sample_rate=0.0,
+    )
 
 
 def current_model_name() -> str:
@@ -197,6 +208,7 @@ def generate_sparql():
 
     except Exception as e:
         logger.exception("Fout bij SPARQL generatie")
+        sentry_sdk.capture_exception(e)
         return jsonify({"error": str(e)}), 500
 
 
@@ -267,6 +279,7 @@ def execute_sparql():
 
     except Exception as e:
         logger.exception("Fout bij SPARQL uitvoering")
+        sentry_sdk.capture_exception(e)
         return jsonify({"error": str(e)}), 500
 
 
@@ -299,6 +312,7 @@ def generate_answer():
 
     except Exception as e:
         logger.exception("Fout bij antwoord generatie")
+        sentry_sdk.capture_exception(e)
         return jsonify({"error": str(e)}), 500
 
 

@@ -402,6 +402,20 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["error"], "Verwacht een JSON-object")
 
+    def test_unexpected_error_is_reported_to_sentry(self):
+        import app as app_module
+        from sparql import sparql_generator
+
+        boom = RuntimeError("onverwacht")
+        with patch.object(sparql_generator, "generate", side_effect=boom), \
+                patch.object(app_module, "sentry_sdk") as mock_sentry:
+            response = self.client.post(
+                "/api/generate-sparql", json={"question": "Hoeveel rijksmonumenten zijn er?"}
+            )
+
+        self.assertEqual(response.status_code, 500)
+        mock_sentry.capture_exception.assert_called_once_with(boom)
+
     def test_root_serves_map_frontend(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)

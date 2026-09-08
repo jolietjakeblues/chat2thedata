@@ -221,6 +221,7 @@ copy .env.example .env
 | `APP_ACCESS_CODE` | nee | leeg (uit) | Vul in om een toegangscode te verplichten; de frontend vraagt er dan automatisch om |
 | `RATE_LIMIT_LLM` | nee | `10/minute;100/day` | Rate limit per IP op `/api/generate-sparql` en `/api/generate-answer` |
 | `RATE_LIMIT_SPARQL` | nee | `30/minute;300/day` | Rate limit per IP op `/api/execute-sparql` |
+| `SENTRY_DSN` | nee | leeg (uit) | Vul in om onverwachte 500's automatisch naar Sentry te sturen |
 
 ---
 
@@ -278,6 +279,7 @@ Deze app roept bij `LLM_PROVIDER=anthropic` of `google` een **betaalde** externe
 - **`FLASK_DEBUG` moet `false` blijven** in elke publiek bereikbare omgeving — de Werkzeug-debugger geeft dan een interactieve Python-console aan wie een fout weet te veroorzaken.
 - Alleen `SELECT`- en `ASK`-queries worden toegestaan op het SPARQL endpoint ([sparql/executor.py](sparql/executor.py)); schrijfoperaties worden geweigerd.
 - `.env` staat in `.gitignore` en hoort nooit gecommit te worden — de API-keys staan daarin.
+- **`SENTRY_DSN`** is optioneel maar aan te raden zodra de app publiek draait: zonder foutregistratie zijn onverwachte 500's alleen zichtbaar als je zelf in de Render-logs kijkt. Alle drie de `except Exception`-blokken in `app.py` sturen de fout expliciet door naar Sentry (`sentry_sdk.capture_exception`) — die worden namelijk al binnen de route afgevangen en geven een nette JSON-foutmelding terug, dus Sentry's automatische onverwerkte-uitzondering-detectie zou ze anders missen.
 
 ---
 
