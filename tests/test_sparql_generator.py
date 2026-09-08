@@ -37,7 +37,7 @@ class ClarificationNeededTests(unittest.TestCase):
 
     def test_disambiguation_lets_generation_proceed(self):
         with patch.object(sparql_generator, "resolve_question", return_value=UTRECHT_GEMEENTE_RESOLVED), \
-                patch.object(sparql_generator, "_generate", return_value="SELECT ?rm WHERE { ?rm a ceo:Rijksmonument }"), \
+                patch.object(sparql_generator, "_generate", return_value="PREFIX ceo: <https://linkeddata.cultureelerfgoed.nl/def/ceo#> SELECT ?rm WHERE { ?rm a ceo:Rijksmonument }"), \
                 patch.object(sparql_generator, "postprocess", side_effect=lambda q, mode: q), \
                 patch.object(sparql_generator, "validate_semantics", return_value=[]), \
                 patch.object(sparql_generator, "validate_completeness", return_value=[]):
@@ -66,7 +66,7 @@ class AnswerabilityLimitationTests(unittest.TestCase):
 
         def fake_generate(prompt_input, system_prompt):
             captured_prompts.append(prompt_input)
-            return "SELECT ?rm WHERE { ?rm a ceo:Rijksmonument }"
+            return "PREFIX ceo: <https://linkeddata.cultureelerfgoed.nl/def/ceo#> SELECT ?rm WHERE { ?rm a ceo:Rijksmonument }"
 
         with patch.object(sparql_generator, "resolve_question", return_value=ResolutionResult()), \
                 patch.object(sparql_generator, "_generate", side_effect=fake_generate), \
@@ -86,13 +86,43 @@ class AnswerabilityLimitationTests(unittest.TestCase):
 
     def test_unrelated_question_never_raises_limitation(self):
         with patch.object(sparql_generator, "resolve_question", return_value=ResolutionResult()), \
-                patch.object(sparql_generator, "_generate", return_value="SELECT ?rm WHERE { ?rm a ceo:Rijksmonument }"), \
+                patch.object(sparql_generator, "_generate", return_value="PREFIX ceo: <https://linkeddata.cultureelerfgoed.nl/def/ceo#> SELECT ?rm WHERE { ?rm a ceo:Rijksmonument }"), \
                 patch.object(sparql_generator, "postprocess", side_effect=lambda q, mode: q), \
                 patch.object(sparql_generator, "validate_semantics", return_value=[]), \
                 patch.object(sparql_generator, "validate_completeness", return_value=[]):
             result = sparql_generator.generate("Welke rijksmonumenten zijn een begraafplaats?", "lijst")
 
         self.assertIsNone(result.caveat)
+
+
+class SyntaxValidationTests(unittest.TestCase):
+    def test_still_invalid_after_retry_raises_syntax_invalid(self):
+        # De "correctie"-aanroep levert hier weer een query zonder PREFIX op
+        # -- syntactisch ongeldig, en dat blijft zo na de ene herkansing.
+        broken_query = "SELECT ?rm WHERE { ?rm a ceo:Rijksmonument }"
+
+        with patch.object(sparql_generator, "resolve_question", return_value=ResolutionResult()), \
+                patch.object(sparql_generator, "_generate", return_value=broken_query), \
+                patch.object(sparql_generator, "postprocess", side_effect=lambda q, mode: q), \
+                patch.object(sparql_generator, "validate_semantics", return_value=[]), \
+                patch.object(sparql_generator, "validate_completeness", return_value=[]):
+            with self.assertRaises(sparql_generator.SparqlSyntaxInvalid):
+                sparql_generator.generate("Hoeveel rijksmonumenten zijn er?", "telling")
+
+    def test_valid_query_never_raises_syntax_invalid(self):
+        valid_query = (
+            "PREFIX ceo: <https://linkeddata.cultureelerfgoed.nl/def/ceo#> "
+            "SELECT ?rm WHERE { ?rm a ceo:Rijksmonument }"
+        )
+
+        with patch.object(sparql_generator, "resolve_question", return_value=ResolutionResult()), \
+                patch.object(sparql_generator, "_generate", return_value=valid_query), \
+                patch.object(sparql_generator, "postprocess", side_effect=lambda q, mode: q), \
+                patch.object(sparql_generator, "validate_semantics", return_value=[]), \
+                patch.object(sparql_generator, "validate_completeness", return_value=[]):
+            result = sparql_generator.generate("Hoeveel rijksmonumenten zijn er?", "telling")
+
+        self.assertEqual(result.query, valid_query)
 
 
 if __name__ == "__main__":

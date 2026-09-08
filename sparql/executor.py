@@ -131,7 +131,10 @@ def execute(query: str, question: str = "") -> dict[str, Any]:
     ruimtelijke FILTER en wordt de ruimtelijke relatie lokaal met Shapely
     berekend (zie sparql/spatial.py). Kapotte of onherstelbare geometrie
     wordt daarbij overgeslagen in plaats van de hele aanvraag te laten
-    mislukken.
+    mislukken. De LIMIT van de vereenvoudigde query wordt eerst verhoogd
+    (spatial.widen_limit) zodat de lokale join niet op een al afgekapt
+    kandidaatveld draait; raakt het kandidaatveld toch die verhoogde grens,
+    dan bevat het resultaat "incomplete_due_to_limit": True.
 
     Returns:
         SPARQL JSON resultaat als dict, gededupliceerd op ?rm.
@@ -159,9 +162,20 @@ def execute(query: str, question: str = "") -> dict[str, Any]:
             exc,
         )
 
-        simplified_query = spatial.strip_spatial_filter(query)
+        simplified_query = spatial.widen_limit(
+            spatial.strip_spatial_filter(query), cap=spatial.FALLBACK_LIMIT
+        )
         data = _run_with_retry(simplified_query)
+        raw_count = len(data.get("results", {}).get("bindings", []))
         data = spatial.apply_spatial_filter(data, relation, obj_var, gebied_var)
+
+        if raw_count >= spatial.FALLBACK_LIMIT:
+            data["incomplete_due_to_limit"] = True
+            logger.warning(
+                "Ruimtelijke fallback: kandidaatset raakte de cap van %d — "
+                "resultaat mogelijk onvolledig.",
+                spatial.FALLBACK_LIMIT,
+            )
 
     data = _translate_provincie_uris(data)
 

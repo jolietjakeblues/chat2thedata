@@ -50,6 +50,32 @@ def strip_spatial_filter(query: str) -> str:
     return _SPATIAL_FILTER_RE.sub("", query)
 
 
+FALLBACK_LIMIT = 10_000  # praktische cap voor Virtuoso, zelfde orde als de RCE-eigen limieten
+
+_LIMIT_RE = re.compile(r"\bLIMIT\s+(\d+)\b", re.IGNORECASE)
+
+
+def widen_limit(query: str, cap: int = FALLBACK_LIMIT) -> str:
+    """
+    Verhoog een bestaande LIMIT naar `cap`, of voeg er een toe als er geen is.
+
+    Nodig omdat de fallback de ruimtelijke FILTER lokaal (met Shapely)
+    toepast NA het endpoint-antwoord: blijft de oorspronkelijke, vaak kleine
+    LIMIT (bv. 20 voor een lijstquery) staan, dan wordt het kandidaatveld al
+    op het endpoint afgekapt vóórdat de lokale join ooit een kans krijgt --
+    het resultaat kan dan stil onvolledig zijn (in het ergste geval 0 rijen
+    terwijl er wel degelijk matches bestaan).
+    """
+    match = _LIMIT_RE.search(query)
+
+    if match:
+        if int(match.group(1)) >= cap:
+            return query
+        return query[: match.start(1)] + str(cap) + query[match.end(1) :]
+
+    return f"{query.rstrip()}\nLIMIT {cap}"
+
+
 def _strip_wkt_prefix(value: str) -> str:
     """Verwijder een eventuele CRS-URI of SRID-prefix vóór de WKT-tekst."""
     value = value.strip()
