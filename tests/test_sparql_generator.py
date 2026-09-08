@@ -46,7 +46,7 @@ class ClarificationNeededTests(unittest.TestCase):
             )
 
         self.assertIn("Rijksmonument", result.query)
-        self.assertIsNone(result.caveat)
+        self.assertEqual(result.caveats, ())
 
 
 class AnswerabilityLimitationTests(unittest.TestCase):
@@ -78,7 +78,8 @@ class AnswerabilityLimitationTests(unittest.TestCase):
             )
 
         self.assertIn("Rijksmonument", result.query)
-        self.assertIn("geregistreerd staan", result.caveat)
+        self.assertEqual(len(result.caveats), 1)
+        self.assertIn("geregistreerd staan", result.caveats[0])
         self.assertTrue(
             any("heeftFunctieNaam" in prompt for prompt in captured_prompts),
             "de prompt_hint van de gekozen optie moet in de LLM-prompt terechtkomen",
@@ -92,7 +93,48 @@ class AnswerabilityLimitationTests(unittest.TestCase):
                 patch.object(sparql_generator, "validate_completeness", return_value=[]):
             result = sparql_generator.generate("Welke rijksmonumenten zijn een begraafplaats?", "lijst")
 
-        self.assertIsNone(result.caveat)
+        self.assertEqual(result.caveats, ())
+
+
+class PropertyChoiceCaveatTests(unittest.TestCase):
+    def test_vague_word_question_adds_property_choice_caveat(self):
+        query_with_functie = (
+            "PREFIX ceo: <https://linkeddata.cultureelerfgoed.nl/def/ceo#> "
+            "SELECT ?rm WHERE { ?rm a ceo:Rijksmonument . "
+            "?rm ceo:heeftOorspronkelijkeFunctie ?f }"
+        )
+        with patch.object(sparql_generator, "resolve_question", return_value=ResolutionResult()), \
+                patch.object(sparql_generator, "_generate", return_value=query_with_functie), \
+                patch.object(sparql_generator, "postprocess", side_effect=lambda q, mode: q), \
+                patch.object(sparql_generator, "validate_semantics", return_value=[]), \
+                patch.object(sparql_generator, "validate_completeness", return_value=[]):
+            result = sparql_generator.generate("Wat voor soort monument is dit?", "lijst")
+
+        self.assertEqual(len(result.caveats), 1)
+        self.assertIn("functie", result.caveats[0])
+
+    def test_limitation_caveat_and_property_choice_caveat_can_coexist(self):
+        # Randgeval: een vraag die zowel de begraafplaats-beperking als een
+        # vage-woord-frase raakt -- bevestigt dat caveats een tuple is die
+        # meerdere onafhankelijke bronnen tegelijk kan dragen.
+        question = "Wat voor soort monument ligt er bij een begraafplaats?"
+        query_with_functie = (
+            "PREFIX ceo: <https://linkeddata.cultureelerfgoed.nl/def/ceo#> "
+            "SELECT ?rm WHERE { ?rm a ceo:Rijksmonument . "
+            "?rm ceo:heeftOorspronkelijkeFunctie ?f }"
+        )
+        with patch.object(sparql_generator, "resolve_question", return_value=ResolutionResult()), \
+                patch.object(sparql_generator, "_generate", return_value=query_with_functie), \
+                patch.object(sparql_generator, "postprocess", side_effect=lambda q, mode: q), \
+                patch.object(sparql_generator, "validate_semantics", return_value=[]), \
+                patch.object(sparql_generator, "validate_completeness", return_value=[]):
+            result = sparql_generator.generate(
+                question, "lijst", limitation_choice="functie_begraafplaats"
+            )
+
+        self.assertEqual(len(result.caveats), 2)
+        self.assertTrue(any("geregistreerd staan" in c for c in result.caveats))
+        self.assertTrue(any("functie" in c for c in result.caveats))
 
 
 class SyntaxValidationTests(unittest.TestCase):

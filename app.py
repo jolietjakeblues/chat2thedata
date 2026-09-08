@@ -198,7 +198,7 @@ def generate_sparql():
 
     try:
         result = sparql_generator.generate(question, mode, disambiguation, limitation_choice)
-        return jsonify({"query": result.query, "caveat": result.caveat})
+        return jsonify({"query": result.query, "caveats": list(result.caveats)})
 
     except sparql_generator.ClarificationNeeded as exc:
         return jsonify({"clarification": semantic_resolver.describe_ambiguity(exc.ambiguous)})
@@ -302,12 +302,13 @@ def generate_answer():
     results = data.get("results", {})
     if not isinstance(results, dict):
         return jsonify({"error": "'results' moet een JSON-object zijn"}), 400
-    caveat = data.get("caveat")
-    if not isinstance(caveat, str) or not caveat:
-        caveat = None
+    caveats = data.get("caveats")
+    if not isinstance(caveats, list):
+        caveats = []
+    caveats = [c for c in caveats if isinstance(c, str) and c]
 
     try:
-        answer = answer_generator.generate(question, results, caveat=caveat)
+        answer = answer_generator.generate(question, results, caveats=caveats)
         return jsonify({"answer": answer})
 
     except Exception as e:

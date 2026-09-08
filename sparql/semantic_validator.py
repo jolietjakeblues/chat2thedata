@@ -128,3 +128,49 @@ def validate_completeness(question: str, query: str) -> list[str]:
             )
 
     return errors
+
+
+# Woorden die naar drie semantisch incompatibele properties kunnen wijzen --
+# zie Type 7 in de ambiguïteitstaxonomie (chat2thedata plan-bestand). Multi-
+# woord-frasen, niet kale "type"/"soort"/"aard": die komen te vaak voor in
+# ongerelateerde vragen (bv. "type kasteel" bedoelt gewoon een functie, geen
+# echte Type-7-vraag).
+VAAG_WOORD_FRASEN = (
+    "soort monument", "soort rijksmonument", "wat voor soort",
+    "monumentaard", "aard van het monument", "welke aard",
+)
+MONUMENTAARD_PATH = "heeftmonumentaard"
+FUNCTIE_PATHS_TYPE7 = ("heeftoorspronkelijkefunctie", "heefthuidigefunctie")
+TYPE_PATH = "heefttype"
+
+
+def describe_property_choice(question: str, query: str) -> str | None:
+    """Meld welk property-pad gebruikt is bij een vage "soort/aard/type"-vraag.
+
+    Anders dan validate_semantics/validate_completeness hierboven: dit is geen
+    foutenlijst die een correctie-retry triggert. heeftMonumentAard, functie
+    en heeftType zijn alle drie geldige lezingen van "soort"/"aard"/"type" --
+    er is niets te corrigeren, alleen iets om transparant te maken: welke van
+    de drie de gegenereerde query daadwerkelijk gebruikt heeft.
+    """
+    q = question.lower()
+    if not any(frase in q for frase in VAAG_WOORD_FRASEN):
+        return None
+
+    lowered = query.lower()
+    gebruikt = []
+    if MONUMENTAARD_PATH in lowered:
+        gebruikt.append("monumentaard (uitsluitend archeologisch/onroerend gebouwd)")
+    if any(path in lowered for path in FUNCTIE_PATHS_TYPE7):
+        gebruikt.append("functie (bv. kerk, kasteel)")
+    if TYPE_PATH in lowered:
+        gebruikt.append("type")
+
+    if not gebruikt:
+        return None
+
+    return (
+        f'"soort"/"aard"/"type" is hier geïnterpreteerd via: {", ".join(gebruikt)}. '
+        "Bedoelde je iets anders, stel de vraag dan explicieter (bv. \"functie\" of "
+        '"monumentaard" met archeologisch/onroerend gebouwd).'
+    )

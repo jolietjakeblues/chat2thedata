@@ -15,6 +15,7 @@ Dat is veiliger voor testwerk met linked data dan elke keer een LLM-samenvatting
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 from typing import Any
 
 
@@ -533,15 +534,19 @@ def _summarize_generic_list(question: str, vars_: list[str], bindings: list[dict
     return " ".join(parts)
 
 
-def generate(question: str, results: dict[str, Any], caveat: str | None = None) -> str:
+def generate(
+    question: str, results: dict[str, Any], caveats: Sequence[str] = ()
+) -> str:
     """
     Genereer een Nederlands antwoord bij SPARQL JSON-resultaten.
 
     Args:
         question: De oorspronkelijke gebruikersvraag.
         results: SPARQL JSON result dict.
-        caveat: Optionele kanttekening (bv. van een gekozen deelinterpretatie
-            uit sparql/answerability.py) die achter het antwoord getoond wordt.
+        caveats: Kanttekeningen (bv. van een gekozen deelinterpretatie uit
+            sparql/answerability.py, of een toelichting op een vaag
+            "soort/aard/type"-property-pad) die elk als eigen alinea achter
+            het antwoord getoond worden.
 
     Returns:
         Een korte, volledige Nederlandse tekst.
@@ -566,7 +571,7 @@ def generate(question: str, results: dict[str, Any], caveat: str | None = None) 
             "resultaat kan onvolledig zijn."
         )
 
-    if caveat:
-        answer = f"{answer}\n\nLet op: {caveat}"
+    for caveat in caveats:
+        answer += f"\n\nLet op: {caveat}"
 
     return answer
