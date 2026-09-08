@@ -1,5 +1,7 @@
 # RCE Erfgoed Assistent
 
+[![Continuous integration](https://github.com/jolietjakeblues/chat2thedata/actions/workflows/ci.yml/badge.svg)](https://github.com/jolietjakeblues/chat2thedata/actions/workflows/ci.yml)
+
 Een webapplicatie waarmee je in gewone taal vragen kunt stellen aan de linked data van de Rijksdienst voor het Cultureel Erfgoed (RCE).
 
 De applicatie vertaalt Nederlandse vragen automatisch naar SPARQL, bevraagt het RCE endpoint en geeft een leesbaar antwoord terug.
